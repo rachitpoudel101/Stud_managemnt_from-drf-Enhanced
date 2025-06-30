@@ -8,13 +8,17 @@ from .models import User, notice
 from .serializers import NoticeSerializer, UserSerializer, CustomTokenObtainPairSerializer
 from .permissions import IsAdmin, IsTeacherOrAdmin
 from student.models import Subject, StudentProfile
-from .utils import log_action, format_username
+from .utils import log_action
 from user import models
 from django.db.models import Q 
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
+@method_decorator(csrf_exempt, name='dispatch')
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
+@method_decorator(csrf_exempt, name='dispatch')
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -50,19 +54,73 @@ class UserViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         # Log the create action
         log_action(request.user, "Attempting to create a new user")
+        # Make a mutable copy of request.data
+        data = request.data.copy()
 
         # Format username before validation (optional)
-        if 'username' in request.data:
-            print("Formatting username:", request.data['username'])
-            request.data['username'] = format_username(request.data['username'])
+        if 'username' in data:
+            print("Formatting username:", data['username'])
+            data['username'] = data['username']
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # Add detailed logging
+        print(f"Creating user with data: {data}")
+        
+        # Handle both 'subject' and 'subjects' fields
+        if 'subject' in data and 'subjects' not in data:
+            # Convert 'subject' to 'subjects'
+            if isinstance(data['subject'], str):
+                try:
+                    if ',' in data['subject']:
+                        data['subjects'] = [int(pk) for pk in data['subject'].split(',') if pk.strip()]
+                    else:
+                        data['subjects'] = [int(data['subject'])]
+                except ValueError:
+                    return Response(
+                        {"error": f"Invalid subject id '{data['subject']}'. Subject id must be an integer."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                data['subjects'] = [data['subject']]
+            
+            # Remove the original 'subject' key to avoid confusion
+            data.pop('subject')
+
+        # Ensure 'subjects' is a list of ints if present, with validation
+        if 'subjects' in data and isinstance(data['subjects'], str):
+            raw_subjects = data['subjects']
+            if ',' in raw_subjects:
+                subject_strs = [pk.strip() for pk in raw_subjects.split(',') if pk.strip()]
+            elif raw_subjects.strip() != '':
+                subject_strs = [raw_subjects.strip()]
+            else:
+                subject_strs = []
+            subject_ids = []
+            for pk in subject_strs:
+                try:
+                    subject_ids.append(int(pk))
+                except ValueError:
+                    return Response(
+                        {"error": f"Invalid subject id '{pk}'. All subject ids must be integers."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            data['subjects'] = subject_ids
+
+        # Validate serializer with more detailed error handling
+        serializer = self.get_serializer(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as e:
+            print(f"Validation error: {str(e)}")
+            print(f"Serializer errors: {serializer.errors}")
+            return Response(
+                serializer.errors, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         role = serializer.validated_data.get('role')
 
         if role == 'teacher':
-            subject_ids = request.data.get('subjects', [])
+            subject_ids = data.get('subjects', [])
 
             # Validate that subjects are provided for teachers
             if not subject_ids:
@@ -277,6 +335,7 @@ class UserViewSet(viewsets.ModelViewSet):
         log_action(user, f"Updated user {instance.username} (role: {instance.role})")
         return Response(serializer.data)
 
+@method_decorator(csrf_exempt, name='dispatch')
 class NoticeViewSet(viewsets.ModelViewSet):
     queryset = notice.objects.all()
     serializer_class = NoticeSerializer

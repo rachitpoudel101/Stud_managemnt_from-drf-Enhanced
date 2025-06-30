@@ -1,12 +1,15 @@
 from rest_framework import status
 from rest_framework.response import Response
 from student.models import StudentProfile
-from user import models, permissions, serializers
+from user import permissions, serializers
+from django.db.models import Q 
+from user.models import User
 from teacher.models import Assignment, Subject
 from user.permissions import IsAdmin, IsTeacher, IsTeacherOrAdmin
 from rest_framework.decorators import action
 from rest_framework import viewsets
 from teacher.serializers import AssignmentSerializer, SubjectSerializer
+from rest_framework.permissions import IsAuthenticated
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
@@ -19,9 +22,9 @@ class SubjectViewSet(viewsets.ModelViewSet):
             return [IsAdmin()]
         if self.action in ['update', 'partial_update']:
             # Only teachers or admins can update subjects
-            return [permissions.IsAuthenticated() & (IsTeacher() | IsAdmin())]
+            return [IsAuthenticated(), (IsTeacher() | IsAdmin())]
         # Anyone authenticated can view subjects
-        return [permissions.IsAuthenticated()]
+        return [IsAuthenticated()]
     
     @action(detail=False, methods=['get'], url_path='unassigned')
     def unassigned_subjects(self, request):
@@ -65,7 +68,7 @@ class AssignmentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsTeacherOrAdmin()]
-        return [permissions.IsAuthenticated()]
+        return [IsAuthenticated()]  # <-- use DRF's IsAuthenticated
 
     def get_queryset(self):
         user = self.request.user
@@ -89,7 +92,7 @@ class AssignmentViewSet(viewsets.ModelViewSet):
         elif user.role == 'teacher':
             # Teachers can see assignments they created or for subjects they teach
             return Assignment.objects.filter(
-                models.Q(created_by=user) | models.Q(subject__teacher=user)
+                Q(subject__teacher=user) | Q(created_by=user)
             ).distinct()
         # Admin can see all assignments
         return Assignment.objects.all()

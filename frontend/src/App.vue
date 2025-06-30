@@ -1,15 +1,19 @@
 <script setup>
-import Navbar from './components/Navbar.vue'
-import Fotter from './components/Fotter.vue'
-import Home from './views/Home.vue'
+import Navbar from './components/Navbar.vue';
 </script>
 
 <template>
-<div class="min-h-screen flex flex-col bg-gray-100 font-sans">
-  <Navbar />
-  <Home />
-  <div class="mt-auto bg-gray-100">  
-    <Fotter />
+  <div class="min-h-screen">
+    <Navbar />
+    <main>
+      <router-view />
+    </main>
   </div>
-</div>
 </template>
+
+<style>
+body {
+  margin: 0;
+  padding: 0;
+}
+</style>

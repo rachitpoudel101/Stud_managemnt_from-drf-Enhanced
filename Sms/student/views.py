@@ -3,10 +3,62 @@ from rest_framework.response import Response
 from teacher.models import Subject
 from rest_framework.decorators import action
 from rest_framework import viewsets
-from student.models import Marks, StudentProfile
-from student.serializers import MarksSerializer
-from user import permissions
-from user.permissions import IsTeacher
+from rest_framework.permissions import IsAuthenticated
+from student.models import Marks, StudentProfile, StudentSubmission
+from student.serializers import MarksSerializer, StudentSubmissionSerializer, StudentProfileSerializer
+from user.permissions import IsTeacher, IsStudent, IsTeacherOrAdmin
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from .models import StudentSubmission
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StudentProfileViewSet(viewsets.ModelViewSet):
+    queryset = StudentProfile.objects.all()
+    serializer_class = StudentProfileSerializer  # Changed from StudentSubmissionSerializer to StudentProfileSerializer
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'student':
+            # Students can only see their own profile
+            return StudentProfile.objects.filter(user=user)
+        elif user.role == 'teacher':
+            # Teachers can see profiles of students in subjects they teach
+            return StudentProfile.objects.filter(subjects__teacher=user).distinct()
+        # Admins can see all profiles
+        return StudentProfile.objects.all()
+        
+    def perform_create(self, serializer):
+        print(f"Creating student profile with data: {serializer.validated_data}")
+        try:
+            # Extract subjects data before saving
+            if 'subjects' in self.request.data:
+                print(f"Subjects data: {self.request.data['subjects']}")
+                
+            # Let the serializer handle the subjects
+            serializer.save()
+        except Exception as e:
+            print(f"Error creating profile: {str(e)}")
+            raise
+
+    # Add debug endpoint to help diagnose issues
+    @action(detail=False, methods=['get'], url_path='debug')
+    def debug_profile(self, request):
+        """Debug endpoint to check serializer and model setup"""
+        return Response({
+            "subjects_available": list(Subject.objects.values('id', 'name')),
+            "sample_format": {
+                "user": "user_id (integer)",
+                "education_level": "School/College/University",
+                "grade": "1-12 or equivalent",
+                "subjects": [1, 2, 3]  # List of subject IDs
+            }
+        })
 
 
 class MarksViewSet(viewsets.ModelViewSet):
@@ -16,7 +68,7 @@ class MarksViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy', 'publish_results', 'bulk_create']:
             return [IsTeacher()]
-        return [permissions.IsAuthenticated()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         user = self.request.user
@@ -120,3 +172,39 @@ class MarksViewSet(viewsets.ModelViewSet):
             "updated": updated_count,
             "errors": errors
         })
+
+
+class StudentSubmissionViewSet(viewsets.ModelViewSet):
+    """API endpoint for student assignment submissions"""
+    queryset = StudentSubmission.objects.all()
+    serializer_class = StudentSubmissionSerializer
+    
+    def get_permissions(self):
+        if self.action == 'create':
+            # Only students can create submissions
+            return [IsAuthenticated(), IsStudent()]
+        if self.action in ['update', 'partial_update', 'destroy']:
+            # Only the student who created it or teachers/admins can modify
+            return [IsAuthenticated()]
+        # Anyone authenticated can view submissions
+        return [IsAuthenticated()]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return StudentSubmission.objects.none()
+            
+        if user.role == 'student':
+            # Students can see only their own submissions
+            return StudentSubmission.objects.filter(student=user)
+        elif user.role == 'teacher':
+            # Teachers can see submissions for assignments they created or in subjects they teach
+            return StudentSubmission.objects.filter(
+                assignment__subject__teacher=user
+            )
+        # Admin can see all submissions
+        return StudentSubmission.objects.all()
+    
+    def perform_create(self, serializer):
+        serializer.save(student=self.request.user)
+        serializer.save(student=self.request.user)

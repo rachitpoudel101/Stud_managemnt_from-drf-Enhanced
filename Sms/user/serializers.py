@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User, notice
-from student.models import Subject
+from teacher.models import Subject
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
@@ -35,27 +35,24 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     subjects = serializers.PrimaryKeyRelatedField(
-        many=True,
-        required=False,
-        queryset=Subject.objects.all(),
-        write_only=True
+        queryset=Subject.objects.all(), many=True, required=False
     )
-    
+
     class Meta:
-        model = User
-        fields = ['id', 'username', 'password', 'email', 'first_name', 'last_name', 'role', 'subjects']
-        extra_kwargs = {
-            'password': {'write_only': True},
-        }
-    
+        model = User  # or your custom user model
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'password', 'role', 'subjects']
+        extra_kwargs = {'password': {'write_only': True}}
+
     def create(self, validated_data):
-        # Remove subjects field from validated_data if it exists
-        subjects = validated_data.pop('subjects', None)
+        subjects = validated_data.pop('subjects', [])
+        user = super().create(validated_data)
+        user.set_password(validated_data['password'])
+        user.save()
         
-        # Create the user
-        user = User.objects.create_user(**validated_data)
-        
-        # The subjects will be handled in the view
+        # If user is a teacher, update the teacher field on subjects
+        if user.role == 'teacher' and subjects:
+            Subject.objects.filter(id__in=[s.id for s in subjects]).update(teacher=user)
+            
         return user
 
 class NoticeSerializer(serializers.ModelSerializer):
